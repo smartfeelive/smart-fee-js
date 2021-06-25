@@ -2,6 +2,8 @@
 
 const fetch = require('node-fetch')
 
+const MIN_SMART_FEE_AMOUNT_SATS = 50000
+
 module.exports.environments = {
     STAGING: { name: 'staging', url: `https://api-staging.smartfee.live`},
     PRODUCTION: { name: 'production', url: `https://api.smartfee.live`}
@@ -61,7 +63,7 @@ module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients,
     // Append an output to your recipients sending some funds to the SmartFee address.
     // It is recommended to send roughly the median amount of a full withdrawal batch. That way you'll 
     // create a good sized utxo instead of a small one.
-    const smartFeeAmount = sumValueSats(recipients)
+    const smartFeeAmount = Math.max(sumValueSats(recipients) || MIN_SMART_FEE_AMOUNT_SATS)
     console.log(`Adding a SmartFee output to your recipients:`)
     const smartFeeOutput = { address: smartFeeAddress, amount: smartFeeAmount }
     const newRecipients = recipients.slice() // Clone array before modifying.
