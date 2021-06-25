@@ -104,7 +104,6 @@ function createNewBuildWithoutChange(satsPerKb, initialBuild, recipients, initia
     const newSmartFeeOutput = { address: initialSmartFeeOutput.address, amount: newSmartFeeAmount }
     const newRecipients = recipients.slice()
     newRecipients.push(newSmartFeeOutput)
-    console.dir(newRecipients)
     const unspentIds = initialBuild.txInfo.unspents.map(it => it.id)
     return smartFeeBuildParams(satsPerKb, newRecipients, unspentIds)
 }
