@@ -1,10 +1,9 @@
 {
   "name": "smart-fee-js",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "",
   "main": "index.js",
   "dependencies": {
-    "bitgo": "^11.16.0",
     "node-fetch": "^2.6.1"
   },
   "devDependencies": {},
