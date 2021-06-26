@@ -88,7 +88,7 @@ function smartFeeBuildParams(satsPerKb, recipients, unspentIds, targetWalletUnsp
         recipients,
         minConfirms: 1,
         enforceMinConfirmsForChange: true,
-        noSplitChange: true,
+        noSplitChange: !targetWalletUnspents,
         addressType: 'p2wsh'
     }
     if (targetWalletUnspents) {
