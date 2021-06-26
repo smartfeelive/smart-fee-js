@@ -58,7 +58,7 @@ module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients,
     if (smartFeeResponse.status !== 200) {
         throw new Error(`Error getting current fee rate: ${JSON.stringify(await smartFeeResponse.json())}`)
     }
-    const satsPerKb = (await smartFeeResponse.json()).current_sats_per_kb
+    const satsPerKb = 2869 //(await smartFeeResponse.json()).current_sats_per_kb
     console.log(`SmartFee is reporting the current next block min-fee-rate to be ${satsPerKb} sats/kb`)
     // Append an output to your recipients sending some funds to the SmartFee address.
     // It is recommended to send roughly the median amount of a full withdrawal batch. That way you'll 
@@ -70,11 +70,16 @@ module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients,
 
     const initialBuildParams = smartFeeBuildParams(satsPerKb, newRecipients, null, smartFeeOptions.targetWalletUnspents)
     const initialBuild = await bitgoWallet.prebuildTransaction(initialBuildParams)
+    //console.log(JSON.stringify(initialBuild, null, 2))
     if (shouldUseInitialBuild(initialBuild)) {
         initialBuildParams.unspents = initialBuild.txInfo.unspents.map(it => it.id)
         return initialBuildParams
     }
-    return createNewBuildWithoutChange(initialBuild.feeInfo.feeRate, initialBuild, recipients, smartFeeOutput)
+    return createNewBuildWithoutChange(calculateExactFeeRate(initialBuild.feeInfo), initialBuild, recipients, smartFeeOutput)
+}
+
+function calculateExactFeeRate(feeInfo) {
+    return feeInfo.fee * 1000.0 / feeInfo.size
 }
 
 function shouldUseInitialBuild(initialBuild) {
@@ -107,15 +112,17 @@ function createNewBuildWithoutChange(satsPerKb, initialBuild, recipients, initia
     const newSize = initialBuild.feeInfo.size - 43 // Removing a p2wsh change output removes 43 bytes.
     const sumInputUtxos= sumInputUtxoSats(initialBuild.txInfo.unspents)
     const sumRecipientsSats = sumValueSats(recipients)
-    // sumInputUtxoSats - sumRecipientsSats - fee  = smartFeeOutput
-    // fee = satsPerKb * kb
-    const newFee = Math.round(satsPerKb * newSize / 1000)
-    const newSmartFeeAmount = sumInputUtxos - sumRecipientsSats - newFee
+    // Take the ceiling of the fee rate to ensure our smart fee output is big enough.
+    const ceilingSatsPerKb = Math.ceil(satsPerKb)
+    const newExpectedFee = Math.ceil(ceilingSatsPerKb * newSize / 1000.0)
+    const newSmartFeeAmount = sumInputUtxos - sumRecipientsSats - newExpectedFee
     const newSmartFeeOutput = { address: initialSmartFeeOutput.address, amount: newSmartFeeAmount }
     const newRecipients = recipients.slice()
     newRecipients.push(newSmartFeeOutput)
     const unspentIds = initialBuild.txInfo.unspents.map(it => it.id)
-    return smartFeeBuildParams(satsPerKb, newRecipients, unspentIds, null)
+    // Take the floor of the fee rate when returning the params to be conservative and again ensure our
+    // smart fee output is not larger than what the selected utxos can afford.
+    return smartFeeBuildParams(Math.floor(satsPerKb), newRecipients, unspentIds, null)
 }
 
 function sumInputUtxoSats(unspents) {
