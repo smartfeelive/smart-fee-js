@@ -1,5 +1,8 @@
 
 
+/**
+ * This is a NodeJS integration of Smart Fee's dynamic fee bumping service.
+ */
 const fetch = require('node-fetch')
 
 const MIN_SMART_FEE_AMOUNT_SATS = 50000
@@ -9,18 +12,29 @@ module.exports.environments = {
     PRODUCTION: { name: 'production', url: `https://api.smartfee.live`}
 }
 
+/**
+ * Generates the send parameters for a BitGo wallet by first interacting with the Smart Fee API, then
+ * attempting to construct parameters that will result in transaction to the provided recipients with
+ * one good-sized output to Smart Fee and no change output. 
+ * @param {*} bitgoWallet 
+ * @param {*} recipients 
+ * @param {*} smartFeeOptions 
+ * @param {*} env 
+ * @returns 
+ */
 module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients, smartFeeOptions, env = module.environments.STAGING) {
     validateSmartFeeOptions(smartFeeOptions)
-    const bitGoAddresssOptions = {
-        chain: 20
-    }
-    let labelLog = ''
+    
+    // Step 1: Generate a new receive address on the BitGo wallet. This is where the funds from fee bumping will
+    // be returned. We generate a p2wsh address and include the given label if one was provided.
+    const bitGoAddresssOptions = { chain: 20 }
     if (smartFeeOptions.returnAddressLabel) {
         bitGoAddresssOptions.label = smartFeeOptions.returnAddressLabel
-        labelLog = ` with label: ${smartFeeOptions.returnAddressLabel}`
     }
     const bitGoReturnAddress = await bitgoWallet.createAddress(bitGoAddresssOptions)
-    console.log(`Generated BitGo address: ${bitGoReturnAddress.address}${labelLog}`)
+    console.log(`Generated BitGo address: ${bitGoReturnAddress.address}`)
+
+    // Step 2: Post this BitGo address to Smart Fee. Smart Fee will return funds to the most recent address you give it.
     const returnAddressResponse = await fetch(`${env.url}/bumper/return_address`, {
         headers: { 
           'x-api-key': smartFeeOptions.apiKey,
@@ -35,6 +49,9 @@ module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients,
         throw new Error(`Error posting return address: ${JSON.stringify(await returnAddressResponse.json())}`)
     }
     console.log(`Posted BitGo return address to Smart Fee`)
+
+    // Step 3: Request a Smart Fee address for you to add to your recipients. The output you send to this address
+    // will be used by Smart Fee for the fee bumping.
     console.log(`Requesting an address from Smart Fee`)
     const bumperAddressResponse = await fetch(`${env.url}/bumper/address`, {
         headers: { 
@@ -48,6 +65,9 @@ module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients,
     }
     const smartFeeAddress = (await bumperAddressResponse.json()).address
     console.log(`Received Smart Fee address: ${smartFeeAddress}`)
+
+    // Step 4: Get the current minimum fee rate. This is roughly the lowest fee rate that would get included in a block if
+    // a block were mined right now.
     console.log(`Getting current fee rate from Smart Fee`)
     const smartFeeResponse = await fetch(`${env.url}/bumper/fee`, {
         headers: {
@@ -58,9 +78,10 @@ module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients,
     if (smartFeeResponse.status !== 200) {
         throw new Error(`Error getting current fee rate: ${JSON.stringify(await smartFeeResponse.json())}`)
     }
-    const satsPerKb = 2869 //(await smartFeeResponse.json()).current_sats_per_kb
+    const satsPerKb = (await smartFeeResponse.json()).current_sats_per_kb
     console.log(`SmartFee is reporting the current next block min-fee-rate to be ${satsPerKb} sats/kb`)
-    // Append an output to your recipients sending some funds to the SmartFee address.
+
+    // Step 5: Append an output to your recipients sending some funds to the SmartFee address.
     // It is recommended to send roughly the median amount of a full withdrawal batch. That way you'll 
     // create a good sized utxo instead of a small one.
     const smartFeeAmount = Math.max(sumValueSats(recipients) || MIN_SMART_FEE_AMOUNT_SATS)
@@ -68,13 +89,18 @@ module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients,
     const newRecipients = recipients.slice() // Clone array before modifying.
     newRecipients.push(smartFeeOutput)
 
+    // Step 6: Ask BitGo to build a transaction with the provided build params.
     const initialBuildParams = smartFeeBuildParams(satsPerKb, newRecipients, null, smartFeeOptions.targetWalletUnspents)
     const initialBuild = await bitgoWallet.prebuildTransaction(initialBuildParams)
-    //console.log(JSON.stringify(initialBuild, null, 2))
+
+    // Step 7: Decide if we want to use this build or not. If there is no change output, or BitGo decided to split the change, 
+    // then we decide to use it. If there is a single change output then we don't use it and we proceed to Step 8.
     if (shouldUseInitialBuild(initialBuild)) {
         initialBuildParams.unspents = initialBuild.txInfo.unspents.map(it => it.id)
         return initialBuildParams
     }
+
+    // Step 8: Create new build parameters to produce a transaction with no change output.
     return createNewBuildWithoutChange(calculateExactFeeRate(initialBuild.feeInfo), initialBuild, recipients, smartFeeOutput)
 }
 
@@ -108,6 +134,15 @@ function smartFeeBuildParams(satsPerKb, recipients, unspentIds, targetWalletUnsp
     return params
 }
 
+/**
+ * Does some math to figure out what build params and Smart Fee output amount it needs to provide BitGo 
+ * in order for a transaction to be created with no change output.
+ * @param {*} satsPerKb 
+ * @param {*} initialBuild 
+ * @param {*} recipients 
+ * @param {*} initialSmartFeeOutput 
+ * @returns 
+ */
 function createNewBuildWithoutChange(satsPerKb, initialBuild, recipients, initialSmartFeeOutput) {
     const newSize = initialBuild.feeInfo.size - 43 // Removing a p2wsh change output removes 43 bytes.
     const sumInputUtxos= sumInputUtxoSats(initialBuild.txInfo.unspents)
