@@ -1,5 +1,3 @@
-
-
 /**
  * This is a NodeJS integration of Smart Fee's dynamic fee bumping service.
  */
