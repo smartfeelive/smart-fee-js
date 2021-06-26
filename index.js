@@ -68,22 +68,31 @@ module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients,
     const newRecipients = recipients.slice() // Clone array before modifying.
     newRecipients.push(smartFeeOutput)
 
-    const initialBuildParams = smartFeeBuildParams(satsPerKb, newRecipients)
+    const initialBuildParams = smartFeeBuildParams(satsPerKb, newRecipients, null, smartFeeOptions.targetWalletUnspents)
     const initialBuild = await bitgoWallet.prebuildTransaction(initialBuildParams)
-    if (!initialBuild.txInfo.changeAddresses || initialBuild.txInfo.changeAddresses.length === 0) {
+    if (shouldUseInitialBuild(initialBuild)) {
         initialBuildParams.unspents = initialBuild.txInfo.unspents.map(it => it.id)
         return initialBuildParams
     }
-    return createNewBuildWithoutChange(satsPerKb, initialBuild, recipients, smartFeeOutput)
+    return createNewBuildWithoutChange(initialBuild.feeInfo.feeRate, initialBuild, recipients, smartFeeOutput)
 }
 
-function smartFeeBuildParams(satsPerKb, recipients, unspentIds) {
+function shouldUseInitialBuild(initialBuild) {
+    const changeAddresses = initialBuild.txInfo.changeAddresses
+    // Just use the initial build if either there's no change, or BitGo has split the change.
+    return !changeAddresses || changeAddresses.length === 0 || changeAddresses.length > 1
+}
+
+function smartFeeBuildParams(satsPerKb, recipients, unspentIds, targetWalletUnspents) {
     const params = {
         recipients,
         minConfirms: 1,
         enforceMinConfirmsForChange: true,
         noSplitChange: true,
         addressType: 'p2wsh'
+    }
+    if (targetWalletUnspents) {
+        params.targetWalletUnspents
     }
     if (unspentIds) {
         params.unspents = unspentIds
@@ -106,8 +115,7 @@ function createNewBuildWithoutChange(satsPerKb, initialBuild, recipients, initia
     const newRecipients = recipients.slice()
     newRecipients.push(newSmartFeeOutput)
     const unspentIds = initialBuild.txInfo.unspents.map(it => it.id)
-    // We don't specify a fee rate here. It is implied from the selected unspents and the recipients.
-    return smartFeeBuildParams(null, newRecipients, unspentIds)
+    return smartFeeBuildParams(satsPerKb, newRecipients, unspentIds, null)
 }
 
 function sumInputUtxoSats(unspents) {
