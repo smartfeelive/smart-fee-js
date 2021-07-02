@@ -90,14 +90,22 @@ module.exports.generateBitGoSendParams = async function(bitgoWallet, recipients,
     // Step 6: Ask BitGo to build a transaction with the provided build params.
     const initialBuildParams = smartFeeBuildParams(satsPerKb, newRecipients, null, smartFeeOptions.targetWalletUnspents)
     const initialBuild = await bitgoWallet.prebuildTransaction(initialBuildParams)
-
+    if (smartFeeOptions.debug) {
+        console.log('Initial build:')
+        console.log(JSON.stringify(initialBuild, null, 2))
+    }
     // Step 7: Decide if we want to use this build or not. If there is no change output, or BitGo decided to split the change, 
     // then we decide to use it. If there is a single change output then we don't use it and we proceed to Step 8.
     if (shouldUseInitialBuild(initialBuild)) {
+        if (smartFeeOptions.debug) {
+            console.log('Using intiial build')
+        }
         initialBuildParams.unspents = initialBuild.txInfo.unspents.map(it => it.id)
         return initialBuildParams
     }
-
+    if (smartFeeOptions.debug) {
+        console.log('Creating new build params to remove change output')
+    }
     // Step 8: Create new build parameters to produce a transaction with no change output.
     return createNewBuildWithoutChange(calculateExactFeeRate(initialBuild.feeInfo), initialBuild, recipients, smartFeeOutput)
 }
